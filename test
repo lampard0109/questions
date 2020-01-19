@@ -1,0 +1,135 @@
+import os
+import sys
+import json
+import glob
+import csv
+import pandas as pd
+from config.report_conversion_tool_config import ReportConversionToolConfig
+
+class ProcessCsv():
+
+    def __init__(self):
+        self.is_loaded = False
+        self.config = ReportConversionToolConfig()
+        self.raw_folder_path = self.config.get_raw_folder_path()
+        self.processed_folder_path = self.config.get_processed_folder_path()
+        self.metainfo_file_path = self.config.get_metainfo_file_path()
+
+        self.processed_file_name = self.config.get_configinfo('ProcessedFileInfo', 'fileName')
+        self.processed_file_path = os.path.join(self.processed_folder_path, self.processed_file_name)
+
+        self.raw_file_path_list = glob.glob(os.path.join(self.raw_folder_path, '*.csv'))
+
+
+    def is_loaded(self):
+        return self.is_loaded
+
+
+    def get_header_info(self):
+        
+        with open(self.raw_file_path_list[0], "r", encoding="utf-8-sig") as readed_raw_file:
+            raw_file_header_info = readed_raw_file.readline().rstrip().split(',')
+            
+        return raw_file_header_info
+
+
+    def read_csv_rows(self):
+
+        raw_csv_row_list = []
+
+        for raw_file_path in self.raw_file_path_list:
+            with open(raw_file_path, "r", encoding="utf-8-sig") as readed_raw_file:
+               
+                next(csv.reader(readed_raw_file))
+
+                for raw_file_row in readed_raw_file:
+                    raw_file_row_info = raw_file_row.rstrip().split(',')
+                    raw_csv_row_list.append(raw_file_row_info)
+
+        return raw_csv_row_list
+
+
+    def load(self):
+
+        with open(self.metainfo_file_path, 'r', encoding='utf-8') as meta_json:
+
+            meta_map = json.load(meta_json)
+            data_defs = meta_map['data']
+            delimiter_defs = {}
+            delimiter_defs["normal-delimiter"] = meta_map['normal-delimiter']
+            delimiter_defs["text-delimiter"] = meta_map['text-delimiter']
+
+            header_index_map = self._get_header_index_map(self.get_header_info())
+            meta_list = []
+            for key in data_defs.keys():
+                data_def = data_defs[key]
+                
+                index_list = []
+                for csv_name in data_def["csv-names"]:
+                    if csv_name in header_index_map:
+                        index_list.append(header_index_map[csv_name])
+                meta_list.append([index_list, data_def["eml-name"], delimiter_defs[data_def["delimiter"]]])
+            
+            self.output_meta_list = meta_list
+            self.is_loaded = True
+    
+    
+    def _get_header_index_map(self, raw_file_header_info):
+
+        header_items = raw_file_header_info
+        header_index_map = {}
+        for col_num, header_item_name in enumerate(header_items):
+            header_index_map[header_item_name] = col_num
+        
+        return header_index_map
+
+
+    def get_output_meta_list(self):
+
+        return self.output_meta_list
+
+
+    def mapping_csv_rows(self):
+
+        meta_list = self.get_output_meta_list()
+
+        processed_csv_content_list = []
+
+        for meta_info in meta_list:
+            processed_csv_index_list = meta_info[0]
+            processed_csv_delimiter = meta_info[2]
+
+            for processed_csv_index in processed_csv_index_list:
+
+                for raw_csv_row in self.read_csv_rows():
+
+                    processed_csv_content_list.append(raw_csv_row[processed_csv_index])
+
+            processed_csv_rows_list = processed_csv_delimiter.join(processed_csv_content_list)
+            
+        return processed_csv_rows_list
+
+
+    def mapping_csv_header(self):
+
+
+        meta_list = self.get_output_meta_list()
+
+        processed_csv_header_list = []
+
+        for meta_info in meta_list:
+            processed_csv_header_item = meta_info[1]
+            processed_csv_header_list.append(processed_csv_header_item)
+            
+        return processed_csv_header_list
+
+
+    def create_process_csv(self):
+
+        processed_csv_rows_list = self.mapping_csv_rows()
+        processed_csv_header_list = self.mapping_csv_header()
+        
+        df = pd.DataFrame(processed_csv_rows_list, columns=processed_csv_header_list)
+        df.to_csv(processed_file_path, index=False)
+
+        return processed_file_path
